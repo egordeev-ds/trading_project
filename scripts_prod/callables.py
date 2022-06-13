@@ -1,17 +1,13 @@
 #imports
 import os
 import json
-import itertools
 from datetime import datetime
-from tqdm import tqdm
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
 from catboost import CatBoostClassifier
-from sklearn.metrics import f1_score,roc_auc_score,roc_curve,confusion_matrix
-from matplotlib import pyplot as plt
-import plotly.graph_objects as go
-import plotly.express as px
+from sklearn.metrics import f1_score,roc_auc_score
+from utils import plot_roc_curve, find_max_fscore, plot_confusion_matrix, plot_feature_importnaces
 
 def prepare_dataset(filepath_input):
 
@@ -19,10 +15,10 @@ def prepare_dataset(filepath_input):
 
     files=os.listdir(filepath_input)
     kline_js=[]
-    for name in tqdm(files):
+    for name in files:
         f=open(filepath_input+name)
         js=json.load(f)
-        for i in tqdm(range(len(js))):
+        for i in range(len(js)):
             kline_js.append(js[i])
 
     E=[]
@@ -118,6 +114,9 @@ def prepare_dataset(filepath_input):
 
 def process_dataset(df, shift, anomaly_crtiretion):
 
+    import warnings
+    warnings.filterwarnings('ignore')
+
     #drop event_time
     df = df.drop('event_time' , axis = 1)
 
@@ -151,126 +150,7 @@ def process_dataset(df, shift, anomaly_crtiretion):
 
     return df_event, df_proc
     
-def plot_candletick(df):
-    
-    fig = go.Figure()
-    
-    fig.add_trace(
-        go.Candlestick(
-            x=df['event_time'],
-            open=df['open_price'],
-            high=df['high_price'],
-            low=df['low_price'],
-            close=df['close_price']
-        ))
-    
-    fig.show()
-      
-def plot_candletick_anomaly(df,filepath_output, left_b, right_b):
-
-    df = df[left_b:right_b]
-        
-    fig = px.scatter(
-        x = df[df['target'] == 1]['t_start'],
-        y = df[df['target'] == 1]['open_price']
-    )
-
-    fig.add_trace(
-        go.Candlestick(
-            x=df['t_start'],
-            open=df['open_price'],
-            high=df['high_price'],
-            low=df['low_price'],
-            close=df['close_price']
-        ))
-    
-    fig.show()
-
-    fig.write_image(os.path.join(filepath_output,'candlestick.png'))
-
-# plot roc curve
-def plot_roc_curve(y_true, y_score):
-    
-    fpr, tpr, thresholds = roc_curve(y_true, y_score)
-
-    plt.plot([0,1], [0,1], linestyle='--', label = 'No Skill')
-    plt.plot(fpr, tpr, marker='.', label = 'CatBoost')
-
-    plt.xlabel('False Positive Rate')
-    plt.ylabel('True Positive Rate')
-
-    plt.legend()
-
-    plt.show()
-
-#find_max_fscore
-def find_max_fscore(y_true, y_score):
-
-    f_score = []
-    cutoff_list = np.arange(0,1,0.01)
- 
-    for cutoff in cutoff_list:
-        y_pred = (y_score > cutoff).astype(int)
-        f_scr = f1_score(y_true, y_pred, pos_label=1, average='binary')
-        f_score.append(f_scr)
-       
-    f_score = pd.Series(f_score, index=cutoff_list)
-
-    fig, ax = plt.subplots()
-
-    f_score.plot(ax=ax)
-
-    plt.show()
- 
-    return f_score.idxmax()
-
-#plot_confusion_matrix
-def plot_confusion_matrix(y_true, y_score, cutoff):
-    
-    cm = confusion_matrix(y_true, y_score > cutoff)
-    classes = ['Non-anomaly', 'anomaly']
-    
-    fig, ax = plt.subplots()
-    
-    ax.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
-    
-    ax.set_title('Confusion matrix')
-    ax.set_ylabel('True label')
-    ax.set_xlabel('Predicted label')
-    
-    ax.set_xticks(np.arange(len(classes)), classes, rotation=45)
-    ax.set_yticks(np.arange(len(classes)), classes)
-
-    thresh = cm.max() / 2.
-    for i, j in itertools.product(range(cm.shape[0]), range(cm.shape[1])):
-        plt.text(j, i, cm[i, j],
-                 horizontalalignment="center",
-                 color="white" if cm[i, j] > thresh else "black")
-
-    fig.set_size_inches(8, 5)
-    fig.set_tight_layout(True)
-    
-    plt.show()
-
-#plot_feature_importnaces
-def plot_feature_importnaces(model,x_train):
-    
-    importances = model.get_feature_importance()
-    
-    forest_importances = pd.Series(importances, index=x_train.columns.to_list())
-    forest_importances = forest_importances.sort_values(ascending = False)
-
-    fig, ax = plt.subplots()
-
-    forest_importances.plot.bar(ax=ax)
-
-    ax.set_title("Feature importances")
-
-    fig.tight_layout()
-
-    plt.show()
-
-def model_build(data, model_name):
+def model_train(data, cb_params, model_name):
 
     data = data.drop(['t_start', 't_end'], axis = 1)
 
@@ -284,17 +164,7 @@ def model_build(data, model_name):
     y_test = test.target.astype(int)
 
     #fit best model
-    params = {
-        'iterations': 300,
-        'learning_rate': 0.03,
-        'depth': 5,
-        'l2_leaf_reg': 2,
-        'rsm': 0.7,
-        'verbose': False,
-        'allow_writing_files': False,
-        'random_state': 42
-    }
-    model = CatBoostClassifier(**params)
+    model = CatBoostClassifier(**cb_params)
     model.fit(x_train, y_train)
 
     # predict train probabilities
@@ -320,8 +190,8 @@ def model_build(data, model_name):
     #calculate metrics
     gini_train = 2 * roc_auc_score(y_train, y_train_pred_proba) - 1
     gini_test = 2 * roc_auc_score(y_test, y_test_pred_proba) - 1
-    f_score_train = f1_score(y_train, (y_train_pred_proba > opt_cutoff))
-    f_score_test  = f1_score(y_test , (y_test_pred_proba  > opt_cutoff))
+    f_score_train = f1_score(y_train, (y_train_pred_proba > opt_cutoff), pos_label=1, average='binary')
+    f_score_test  = f1_score(y_test , (y_test_pred_proba  > opt_cutoff), pos_label=1, average='binary')
 
     #print metrics
     print('gini_train:', gini_train)
@@ -331,7 +201,7 @@ def model_build(data, model_name):
 
     model.save_model(model_name)
 
-def model_inference(df_proc,df_event,model_name):
+def model_inference(df_proc, df_event, cutoff, model_name):
 
     #load model
     model = CatBoostClassifier()
@@ -342,7 +212,7 @@ def model_inference(df_proc,df_event,model_name):
     pred_proba = pred_proba[:, 1]
 
     #make prediction
-    cutoff = 0.04
+    cutoff = cutoff
     prediction = (pred_proba > cutoff).astype(int)
     df_event['target'] = prediction
 
