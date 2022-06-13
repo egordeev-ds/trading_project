@@ -71,10 +71,6 @@ def find_max_fscore(y_true, y_score):
        
     f_score = pd.Series(f_score, index=cutoff_list)
 
-    fig, ax = plt.subplots()
-    f_score.plot(ax=ax)
-    plt.show()
- 
     return f_score.idxmax()
 
 def plot_confusion_matrix(y_true, y_score, cutoff):

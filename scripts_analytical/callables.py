@@ -73,6 +73,7 @@ def prepare_dataset(filepath_input):
         }
 
     df = pd.DataFrame(data=d)
+    df['vol_per_trade'] = df['quote_volume'] / df['n_trades']
 
     #prepare features
 
@@ -91,34 +92,24 @@ def prepare_dataset(filepath_input):
             lambda x: datetime.fromtimestamp(x/1000.0)
             ))
 
-    df['t_start'] = df['event_time']
-    df['t_end'] = df['event_time'].shift(-1)
-
     df['close_delta'] = df['close_price'].shift(-1) - df['close_price']
     df['trades_delta'] = df['n_trades'].shift(-1) - df['n_trades']
-
     df['quote_volume_delta'] = df['quote_volume'].shift(-1) - df['quote_volume']
     df['base_volume_delta'] = df['base_volume'].shift(-1) - df['base_volume']
-
     df['buy_quote_delta'] = df['buy_quote'].shift(-1) - df['buy_quote']
     df['buy_base_delta'] = df['buy_base'].shift(-1) - df['buy_base']
+    df['vol_per_trade_delta'] = df['vol_per_trade'].shift(-1) - df['vol_per_trade']
 
     df = df.drop_duplicates('event_time', keep = 'first')
     df = df.sort_values(by='event_time').reset_index(drop = True)
     df = df.dropna()
 
-    #save to hdfs
-    #df.to_csv(filepath_output)
-
     return df
 
-def process_dataset(df, shift, anomaly_crtiretion):
+def process_dataset(df, shift_backwards, shift_forward, anomaly_crtiretion):
 
     import warnings
     warnings.filterwarnings('ignore')
-
-    #drop event_time
-    df = df.drop('event_time' , axis = 1)
 
     #change type
     df.t_start = pd.to_datetime(df.t_start)
@@ -129,7 +120,7 @@ def process_dataset(df, shift, anomaly_crtiretion):
     df['quote_volume_delta'].loc[df['is_closed'] == True] = (df[df['is_closed'] == True]['quote_volume'].values) + (df[df['is_closed'] == True]['quote_volume_delta'].values)
     df['base_volume_delta'].loc[df['is_closed'] == True] = (df[df['is_closed'] == True]['base_volume'].values) + (df[df['is_closed'] == True]['base_volume_delta'].values)
     df['buy_quote_delta'].loc[df['is_closed'] == True] = (df[df['is_closed'] == True]['buy_quote'].values) + (df[df['is_closed'] == True]['buy_quote_delta'].values)
-    df['buy_base_delta'].loc[df['is_closed'] == True] = (df[df['is_closed'] == True]['buy_base'].values) + (df[df['is_closed'] == True]['buy_base_delta'].values)
+    df['vol_per_trade_delta'].loc[df['is_closed'] == True] = (df[df['is_closed'] == True]['vol_per_trade'].values) + (df[df['is_closed'] == True]['vol_per_trade_delta'].values)
 
     #аномалия на начало периода
     df['anomaly_t_start'] = np.where(df.close_price > df.open_price,
@@ -137,22 +128,34 @@ def process_dataset(df, shift, anomaly_crtiretion):
                                     df.open_price/df.low_price)
 
     #аномалия на конец периода
-    df['anomaly_t_end'] = df['anomaly_t_start'].shift(shift)
+    df['anomaly_t_end'] = df['anomaly_t_start'].shift(shift_forward)
 
     #target - на конец периода (спустя 250мс после t_start)
     df['target'] = df['anomaly_t_end'] > anomaly_crtiretion
+
+    #округление
+    #df = df.round(2)
 
     #select_состояние
     df_event = df[['t_start','open_price','close_price','low_price','high_price','n_trades','base_volume','quote_volume','buy_base','target']]
 
     #select deltas
-    df_proc = df[['t_start','t_end','close_delta','trades_delta','quote_volume_delta','buy_quote_delta','target']]
+    df_period = df[['t_start','t_end','close_delta','trades_delta','quote_volume_delta','buy_quote_delta','vol_per_trade_delta','target']]
 
-    return df_event, df_proc
+    #features
+    df_model = df_period.drop(['t_start', 't_end'], axis = 1)
+
+    data_temp = pd.DataFrame()
+    for col in df_model.drop('target', axis = 1).columns:
+        for shift_bakcwards in range(shift_backwards+1):
+            data_temp[f'{col}_{shift_bakcwards}'] = df_model[col].shift(shift_bakcwards)
+
+    df_model = pd.concat([data_temp, df_model.target], axis = 1)
+    df_model = df_model.dropna().reset_index(drop = True)
+
+    return df_event, df_period, df_model
     
 def model_train(data, cb_params, model_name):
-
-    data = data.drop(['t_start', 't_end'], axis = 1)
 
     #split
     train, test = train_test_split(data, test_size = 0.2, random_state = 42, shuffle = False)
