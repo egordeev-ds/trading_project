@@ -3,7 +3,7 @@ import itertools
 
 import pandas as pd
 import numpy as np
-from sklearn.metrics import f1_score,roc_curve,confusion_matrix
+from sklearn.metrics import f1_score, recall_score, roc_curve, confusion_matrix
 from matplotlib import pyplot as plt
 import plotly.graph_objects as go
 import plotly.express as px
@@ -72,6 +72,20 @@ def find_max_fscore(y_true, y_score):
     f_score = pd.Series(f_score, index=cutoff_list)
 
     return f_score.idxmax()
+
+def find_max_recall(y_true, y_score):
+
+    rec_score = []
+    cutoff_list = np.arange(0,1,0.01)
+ 
+    for cutoff in cutoff_list:
+        y_pred = (y_score > cutoff).astype(int)
+        rec_scr = recall_score(y_true, y_pred, pos_label=1, average='binary')
+        rec_score.append(rec_scr)
+       
+    rec_score = pd.Series(rec_score, index=cutoff_list)
+
+    return rec_score.idxmax()
 
 def plot_confusion_matrix(y_true, y_score, cutoff):
     

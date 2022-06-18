@@ -9,7 +9,7 @@ from catboost import CatBoostClassifier
 from sklearn.metrics import f1_score,roc_auc_score
 from utils import plot_roc_curve, find_max_fscore, plot_confusion_matrix, plot_feature_importnaces
 
-def prepare_dataset(filepath_input):
+def parse_json(filepath_input):
 
     #parsing json
 
@@ -34,11 +34,12 @@ def prepare_dataset(filepath_input):
     q=[]
     V=[]
     Q=[]
+    vol_per_trade = []
 
     for js_i in kline_js:
-        
+
         if "stream" in js_i["r"] and js_i["r"]["stream"] == "btcusdt@kline_1m":
-            
+
             try:
                 E.append(js_i['r']['data']['E'])
                 t_start.append(js_i['r']['data']['k']['t'])
@@ -52,7 +53,9 @@ def prepare_dataset(filepath_input):
                 V.append(float(js_i['r']['data']['k']['V']))
                 Q.append(float(js_i['r']['data']['k']['Q']))
                 h.append(float(js_i['r']['data']['k']['h']))
-                l.append(float(js_i['r']['data']['k']['l']))  
+                l.append(float(js_i['r']['data']['k']['l']))
+                vol_per_trade.append(float(
+                    js_i['r']['data']['k']['q'])/js_i['r']['data']['k']['n'])
             except:
                 print(js_i)
 
@@ -69,90 +72,89 @@ def prepare_dataset(filepath_input):
         'buy_base':V, 
         'buy_quote':Q, 
         'n_trades':n, 
-        'is_closed':x
+        'vol_per_trade':vol_per_trade,
+        'is_closed':x,
         }
 
     df = pd.DataFrame(data=d)
-    df['vol_per_trade'] = df['quote_volume'] / df['n_trades']
 
-    #prepare features
+    return df
 
-    df['event_time'] = pd.to_datetime(
-        df['event_time'].apply(
-            lambda x: datetime.fromtimestamp(x/1000.0)
-            ))
+def generate_features(df, feature_cols, shift_backwards, shift_forward, anomaly_crtiretion):
+    
+    ##deltas
+    for col in feature_cols:
+        df[f'{col}_delta'] = df[col].shift(-1) - df[col]    
 
-    df['t_start'] = pd.to_datetime(
-        df['t_start'].apply(
-            lambda x: datetime.fromtimestamp(x/1000.0)
-            ))
+    #correction
+    condition = (df['is_closed'] == True)
+    feature_cols_delta = [col + '_delta' for col in feature_cols]
+    for col_1, col_2 in zip(feature_cols,feature_cols_delta):
+        df[col_2].loc[condition] = (df[col_1].loc[condition].values) + (df[col_2].loc[condition].values)
 
-    df['t_end'] = pd.to_datetime(
-        df['t_end'].apply(
-            lambda x: datetime.fromtimestamp(x/1000.0)
-            ))
+    ##shift deltas
+    data_temp = pd.DataFrame()
+    for col in feature_cols_delta:
+        for shift in range(shift_backwards+1):
+            #deltas
+            data_temp[f'{col}_{shift}'] = df[col].shift(shift)
+            #cumsum deltas
+            if shift > 1:
+                data_temp[f'{col}_0_{shift-1}'] = df[col].rolling(shift).sum()
 
-    df['close_delta'] = df['close_price'].shift(-1) - df['close_price']
-    df['trades_delta'] = df['n_trades'].shift(-1) - df['n_trades']
-    df['quote_volume_delta'] = df['quote_volume'].shift(-1) - df['quote_volume']
-    df['base_volume_delta'] = df['base_volume'].shift(-1) - df['base_volume']
-    df['buy_quote_delta'] = df['buy_quote'].shift(-1) - df['buy_quote']
-    df['buy_base_delta'] = df['buy_base'].shift(-1) - df['buy_base']
-    df['vol_per_trade_delta'] = df['vol_per_trade'].shift(-1) - df['vol_per_trade']
+    df = pd.concat([df.drop(feature_cols_delta, axis = 1), data_temp], axis = 1)
+    df = df.dropna().reset_index(drop = True)
 
-    df = df.drop_duplicates('event_time', keep = 'first')
-    df = df.sort_values(by='event_time').reset_index(drop = True)
+    #target calculation
+    df['anomaly_t_start'] = np.where(
+        df.close_price > df.open_price,
+        df.high_price/df.open_price,
+        df.open_price/df.low_price
+        )
+    df['anomaly_t_end'] = df['anomaly_t_start'].shift(-shift_forward)
+    df['target'] = df['anomaly_t_end'] > anomaly_crtiretion
     df = df.dropna()
 
     return df
 
-def process_dataset(df, shift_backwards, shift_forward, anomaly_crtiretion):
+def process_features(df, feature_cols):
 
-    import warnings
-    warnings.filterwarnings('ignore')
+    #correction_1
+    df['t_start'] = df['event_time']
+    df['t_end'] = df['event_time'].shift(-1)
 
-    #change type
-    df.t_start = pd.to_datetime(df.t_start)
-    df.t_end = pd.to_datetime(df.t_end)
+    df = df.dropna()
+    df['event_time'] = pd.to_datetime(df['event_time'].apply(
+        lambda x: datetime.fromtimestamp(x/1000.0)
+        ))
+    df['t_start'] = pd.to_datetime(df['t_start'].apply(
+        lambda x: datetime.fromtimestamp(x/1000.0)
+        ))
+    df['t_end'] = pd.to_datetime( df['t_end'].apply(
+        lambda x: datetime.fromtimestamp(x/1000.0)
+        ))
 
-    #correction
-    df['trades_delta'].loc[df['is_closed'] == True] = (df[df['is_closed'] == True]['n_trades'].values) + (df[df['is_closed'] == True]['trades_delta'].values)
-    df['quote_volume_delta'].loc[df['is_closed'] == True] = (df[df['is_closed'] == True]['quote_volume'].values) + (df[df['is_closed'] == True]['quote_volume_delta'].values)
-    df['base_volume_delta'].loc[df['is_closed'] == True] = (df[df['is_closed'] == True]['base_volume'].values) + (df[df['is_closed'] == True]['base_volume_delta'].values)
-    df['buy_quote_delta'].loc[df['is_closed'] == True] = (df[df['is_closed'] == True]['buy_quote'].values) + (df[df['is_closed'] == True]['buy_quote_delta'].values)
-    df['vol_per_trade_delta'].loc[df['is_closed'] == True] = (df[df['is_closed'] == True]['vol_per_trade'].values) + (df[df['is_closed'] == True]['vol_per_trade_delta'].values)
+    #correction_2
+    df = df.drop_duplicates('event_time', keep = 'first')
+    df = df.sort_values(by='event_time').reset_index(drop = True)
+    df = df.drop('event_time' , axis = 1)
+    df = df.round(2)
+    df = df.reset_index(drop = True)
 
-    #аномалия на начало периода
-    df['anomaly_t_start'] = np.where(df.close_price > df.open_price,
-                                    df.high_price/df.open_price,
-                                    df.open_price/df.low_price)
-
-    #аномалия на конец периода
-    df['anomaly_t_end'] = df['anomaly_t_start'].shift(shift_forward)
-
-    #target - на конец периода (спустя 250мс после t_start)
-    df['target'] = df['anomaly_t_end'] > anomaly_crtiretion
-
-    #округление
-    #df = df.round(2)
+    #select
+    dt_cols = ['t_start', 't_end']
+    feature_cols = feature_cols
+    delta_cols = [col for col in df.columns if 'delta' in col]
 
     #select_состояние
-    df_event = df[['t_start','open_price','close_price','low_price','high_price','n_trades','base_volume','quote_volume','buy_base','target']]
+    df_event = df[dt_cols + feature_cols + ['target']]
 
-    #select deltas
-    df_period = df[['t_start','t_end','close_delta','trades_delta','quote_volume_delta','buy_quote_delta','vol_per_trade_delta','target']]
+    #select_изменение_состояния
+    df_period = df[dt_cols + delta_cols + ['target']]
 
-    #features
-    df_model = df_period.drop(['t_start', 't_end'], axis = 1)
-
-    data_temp = pd.DataFrame()
-    for col in df_model.drop('target', axis = 1).columns:
-        for shift_bakcwards in range(shift_backwards+1):
-            data_temp[f'{col}_{shift_bakcwards}'] = df_model[col].shift(shift_bakcwards)
-
-    df_model = pd.concat([data_temp, df_model.target], axis = 1)
-    df_model = df_model.dropna().reset_index(drop = True)
-
+    #select_обучаяющая_выборка
+    df_model = df[delta_cols + ['target']]
+    
     return df_event, df_period, df_model
     
 def model_train(data, cb_params, model_name):
@@ -215,7 +217,7 @@ def model_inference(df_proc, df_event, cutoff, model_name):
     pred_proba = pred_proba[:, 1]
 
     #make prediction
-    prediction = (pred_proba > cutoff).astype(int)
+    prediction = pred_proba > cutoff
     df_event['target'] = prediction
 
     return df_event
