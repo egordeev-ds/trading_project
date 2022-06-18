@@ -1,5 +1,5 @@
 root_path : '/Users/cotangentofzero/Data_science/trading_project/'
-filepath_input : 'data/raw_data_7d/'
+filepath_input : 'data/raw_data/'
 filepath_output : 'data/' 
 model_name : 'artifacts/trading_model_2'
 
