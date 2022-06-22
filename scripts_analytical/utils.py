@@ -23,13 +23,18 @@ def plot_candletick(df):
     
     fig.show()
       
-def plot_candletick_anomaly(df, filepath_output, left_b, right_b):
-
-    df = df[left_b:right_b]
+def plot_candletick_anomaly(df):
         
     fig = px.scatter(
-        x = df[df['target'] == 1]['t_start'],
-        y = df[df['target'] == 1]['open_price']
+        x = df[df['true'] == 1]['t_start'],
+        y = df[df['true'] == 1]['open_price'],
+        color = 'black'
+    )
+    
+    fig = px.scatter(
+        x = df[df['predicted'] == 1]['t_start'],
+        y = df[df['predicted'] == 1]['open_price'], 
+        color = 'white'
     )
 
     fig.add_trace(
@@ -43,7 +48,7 @@ def plot_candletick_anomaly(df, filepath_output, left_b, right_b):
     
     fig.show()
 
-    fig.write_image(os.path.join(filepath_output,'candlestick.png'))
+    #fig.write_image(os.path.join(filepath_output,'candlestick.png'))
 
 def plot_roc_curve(y_true, y_score):
     
@@ -114,11 +119,11 @@ def plot_confusion_matrix(y_true, y_score, cutoff):
     
     plt.show()
 
-def plot_feature_importnaces(model,x_train):
+def plot_feature_importnaces(model,x_train,top = 20):
     
     importances = model.get_feature_importance()
     forest_importances = pd.Series(importances, index=x_train.columns.to_list())
-    forest_importances = forest_importances.sort_values(ascending = False)
+    forest_importances = forest_importances.sort_values(ascending = False)[:top]
     
     fig, ax = plt.subplots()
     forest_importances.plot.bar(ax=ax)
