@@ -113,8 +113,6 @@ def generate_features(df, shift_b, shift_f, anomaly_crtiretion):
         df[col_2].loc[condition] = (df[col_1].loc[condition].values) + (df[col_2].loc[condition].values)
     df = df.drop(axis=0, index = [1774,79063])
     df = df.drop('is_closed', axis = 1)
-
-    #vol_per_trade
     df['vol_per_trade_delta'] = df['base_volume_delta'] / df['n_trades_delta']
     delta_cols.append('vol_per_trade_delta')
 
@@ -133,13 +131,12 @@ def generate_features(df, shift_b, shift_f, anomaly_crtiretion):
     df = pd.concat([df, data_temp], axis = 1)
 
     #target
-    df['anomaly_t_start'] = np.where(
+    df['target'] = np.where(
         df.close_price > df.open_price,
-        df.high_price/df.open_price,
-        df.open_price/df.low_price
+        df.high_price/df.open_price  > anomaly_crtiretion,
+        False
         )
-    df['anomaly_t_end'] = df['anomaly_t_start'].shift(-shift_f)
-    df['target'] = df['anomaly_t_end'] > anomaly_crtiretion
+    df['target'] = df['target'].shift(-shift_f)
 
     return df
 
@@ -149,7 +146,7 @@ def select_features(df):
     dt_cols = ['t_start', 't_end']
     price_cols = ['open_price','close_price','low_price','high_price']
     feature_cols = ['base_volume','buy_base','n_trades']
-    target_cols = ['anomaly_t_start','anomaly_t_end','target']
+    target_cols = ['target']
     delta_cols = df.drop(dt_cols+price_cols+feature_cols+target_cols, axis = 1).columns.to_list()
 
     ###prepare
