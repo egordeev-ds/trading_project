@@ -102,7 +102,7 @@ def process_data(df):
 
 def generate_features(df, shift_b, shift_f, anomaly_crtiretion):
     
-    feature_cols = ['base_volume','buy_base','n_trades']
+    feature_cols = ['close_price','base_volume','buy_base','n_trades']
 
     #deltas
     for col in feature_cols:
