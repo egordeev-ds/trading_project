@@ -1,1 +1,0 @@
-Detecting anomaly candeticks

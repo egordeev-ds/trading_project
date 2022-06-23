@@ -9,11 +9,10 @@ from catboost import CatBoostClassifier
 from sklearn.metrics import f1_score,roc_auc_score
 from utils import plot_roc_curve, find_max_fscore, plot_confusion_matrix, plot_feature_importnaces
 
-def prepare_dataset(filepath_input):
-
-    #parsing json
+def parse_json(filepath_input):
 
     files=os.listdir(filepath_input)
+
     kline_js=[]
     for name in files:
         f=open(filepath_input+name)
@@ -36,23 +35,24 @@ def prepare_dataset(filepath_input):
     Q=[]
 
     for js_i in kline_js:
-        
+
         if "stream" in js_i["r"] and js_i["r"]["stream"] == "btcusdt@kline_1m":
-            
+
             try:
                 E.append(js_i['r']['data']['E'])
                 t_start.append(js_i['r']['data']['k']['t'])
                 t_end.append(js_i['r']['data']['k']['T'])
                 opens.append(float(js_i['r']['data']['k']['o']))
                 closes.append(float(js_i['r']['data']['k']['c']))
+                l.append(float(js_i['r']['data']['k']['l']))
+                h.append(float(js_i['r']['data']['k']['h']))
                 v.append(float(js_i['r']['data']['k']['v']))
-                n.append(js_i['r']['data']['k']['n'])
-                x.append(js_i['r']['data']['k']['x'])
                 q.append(float(js_i['r']['data']['k']['q']))
                 V.append(float(js_i['r']['data']['k']['V']))
                 Q.append(float(js_i['r']['data']['k']['Q']))
-                h.append(float(js_i['r']['data']['k']['h']))
-                l.append(float(js_i['r']['data']['k']['l']))  
+                n.append(js_i['r']['data']['k']['n'])
+                x.append(js_i['r']['data']['k']['x'])
+                
             except:
                 print(js_i)
 
@@ -69,90 +69,100 @@ def prepare_dataset(filepath_input):
         'buy_base':V, 
         'buy_quote':Q, 
         'n_trades':n, 
-        'is_closed':x
+        'is_closed':x,
         }
 
     df = pd.DataFrame(data=d)
 
-    #prepare features
+    return df
 
+def process_data(df):
+
+    #correction_1
     df['event_time'] = pd.to_datetime(
         df['event_time'].apply(
             lambda x: datetime.fromtimestamp(x/1000.0)
-            ))
-
-    df['t_start'] = pd.to_datetime(
-        df['t_start'].apply(
-            lambda x: datetime.fromtimestamp(x/1000.0)
-            ))
-
-    df['t_end'] = pd.to_datetime(
-        df['t_end'].apply(
-            lambda x: datetime.fromtimestamp(x/1000.0)
-            ))
-
+        )
+    )
     df['t_start'] = df['event_time']
     df['t_end'] = df['event_time'].shift(-1)
-
-    df['close_delta'] = df['close_price'].shift(-1) - df['close_price']
-    df['trades_delta'] = df['n_trades'].shift(-1) - df['n_trades']
-
-    df['quote_volume_delta'] = df['quote_volume'].shift(-1) - df['quote_volume']
-    df['base_volume_delta'] = df['base_volume'].shift(-1) - df['base_volume']
-
-    df['buy_quote_delta'] = df['buy_quote'].shift(-1) - df['buy_quote']
-    df['buy_base_delta'] = df['buy_base'].shift(-1) - df['buy_base']
-
-    df = df.drop_duplicates('event_time', keep = 'first')
-    df = df.sort_values(by='event_time').reset_index(drop = True)
     df = df.dropna()
 
-    #save to hdfs
-    #df.to_csv(filepath_output)
+    #correction_2
+    df = df.drop_duplicates('event_time', keep = 'first')
+    df = df.sort_values(by='event_time').reset_index(drop = True)
+    df = df.drop('event_time' , axis = 1)
+    df = df.dropna()
+
+    #correction_3
+    df['buy_base'] = df['buy_base']*1000000
+    df = df.drop(['quote_volume','buy_quote'], axis = 1)
+    
+    return df
+
+def generate_features(df, shift_b, shift_f, anomaly_crtiretion):
+    
+    feature_cols = ['base_volume','buy_base','n_trades']
+
+    #deltas
+    for col in feature_cols:
+        df[f'{col}_delta'] = df[col].shift(-1) - df[col]
+    condition = (df['is_closed'] == True)
+    delta_cols = [col + '_delta' for col in feature_cols]
+    for col_1, col_2 in zip(feature_cols,delta_cols):
+        df[col_2].loc[condition] = (df[col_1].loc[condition].values) + (df[col_2].loc[condition].values)
+    df = df.drop(axis=0, index = [1774,79063])
+    df = df.drop('is_closed', axis = 1)
+
+    #vol_per_trade
+    df['vol_per_trade_delta'] = df['base_volume_delta'] / df['n_trades_delta']
+    delta_cols.append('vol_per_trade_delta')
+
+    #shift deltas
+    data_temp = pd.DataFrame()
+    for col in delta_cols:
+        for shift in range(1,shift_b+1):
+            data_temp[f'{col}_{shift}'] = df[col].shift(shift)
+    df = pd.concat([df, data_temp], axis = 1)
+
+    #shift cumsum deltas
+    data_temp = pd.DataFrame()
+    for col in delta_cols:
+        for shift in range(2,shift_b+1):
+            data_temp[f'{col}_0_{shift-1}'] = df[col].rolling(shift).sum()
+    df = pd.concat([df, data_temp], axis = 1)
+
+    #target
+    df['anomaly_t_start'] = np.where(
+        df.close_price > df.open_price,
+        df.high_price/df.open_price,
+        df.open_price/df.low_price
+        )
+    df['anomaly_t_end'] = df['anomaly_t_start'].shift(-shift_f)
+    df['target'] = df['anomaly_t_end'] > anomaly_crtiretion
 
     return df
 
-def process_dataset(df, shift, anomaly_crtiretion):
+def select_features(df):
 
-    import warnings
-    warnings.filterwarnings('ignore')
+    #columns
+    dt_cols = ['t_start', 't_end']
+    price_cols = ['open_price','close_price','low_price','high_price']
+    feature_cols = ['base_volume','buy_base','n_trades']
+    target_cols = ['anomaly_t_start','anomaly_t_end','target']
+    delta_cols = df.drop(dt_cols+price_cols+feature_cols+target_cols, axis = 1).columns.to_list()
 
-    #drop event_time
-    df = df.drop('event_time' , axis = 1)
+    ###prepare
+    df = df.dropna()
+    df = df.reset_index(drop = True)
 
-    #change type
-    df.t_start = pd.to_datetime(df.t_start)
-    df.t_end = pd.to_datetime(df.t_end)
+    ###select
+    df_event = df[dt_cols + price_cols + ['base_volume'] + ['target']]
+    df_model = df[delta_cols + ['target']]
 
-    #correction
-    df['trades_delta'].loc[df['is_closed'] == True] = (df[df['is_closed'] == True]['n_trades'].values) + (df[df['is_closed'] == True]['trades_delta'].values)
-    df['quote_volume_delta'].loc[df['is_closed'] == True] = (df[df['is_closed'] == True]['quote_volume'].values) + (df[df['is_closed'] == True]['quote_volume_delta'].values)
-    df['base_volume_delta'].loc[df['is_closed'] == True] = (df[df['is_closed'] == True]['base_volume'].values) + (df[df['is_closed'] == True]['base_volume_delta'].values)
-    df['buy_quote_delta'].loc[df['is_closed'] == True] = (df[df['is_closed'] == True]['buy_quote'].values) + (df[df['is_closed'] == True]['buy_quote_delta'].values)
-    df['buy_base_delta'].loc[df['is_closed'] == True] = (df[df['is_closed'] == True]['buy_base'].values) + (df[df['is_closed'] == True]['buy_base_delta'].values)
+    return df_event, df_model
 
-    #аномалия на начало периода
-    df['anomaly_t_start'] = np.where(df.close_price > df.open_price,
-                                    df.high_price/df.open_price,
-                                    df.open_price/df.low_price)
-
-    #аномалия на конец периода
-    df['anomaly_t_end'] = df['anomaly_t_start'].shift(shift)
-
-    #target - на конец периода (спустя 250мс после t_start)
-    df['target'] = df['anomaly_t_end'] > anomaly_crtiretion
-
-    #select_состояние
-    df_event = df[['t_start','open_price','close_price','low_price','high_price','n_trades','base_volume','quote_volume','buy_base','target']]
-
-    #select deltas
-    df_proc = df[['t_start','t_end','close_delta','trades_delta','quote_volume_delta','buy_quote_delta','target']]
-
-    return df_event, df_proc
-    
-def model_train(data, cb_params, model_name):
-
-    data = data.drop(['t_start', 't_end'], axis = 1)
+def model_train(data, cb_params):
 
     #split
     train, test = train_test_split(data, test_size = 0.2, random_state = 42, shuffle = False)
@@ -199,8 +209,6 @@ def model_train(data, cb_params, model_name):
     print('f_score_train:', f_score_train )
     print('f_score_test', f_score_test)
 
-    model.save_model(model_name)
-
 def model_inference(df_proc, df_event, cutoff, model_name):
 
     #load model
@@ -212,7 +220,7 @@ def model_inference(df_proc, df_event, cutoff, model_name):
     pred_proba = pred_proba[:, 1]
 
     #make prediction
-    prediction = (pred_proba > cutoff).astype(int)
+    prediction = pred_proba > cutoff
     df_event['target'] = prediction
 
     return df_event

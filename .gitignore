@@ -1,0 +1,6 @@
+**.csv
+**.json
+data/raw_data/**.json
+data/raw_data_7d/**.csv
+data/raw_data/*.json
+data/raw_data_7d/*.csv

@@ -3,10 +3,11 @@ import itertools
 
 import pandas as pd
 import numpy as np
-from sklearn.metrics import f1_score,roc_curve,confusion_matrix
+from sklearn.metrics import f1_score, recall_score, roc_curve, confusion_matrix
 from matplotlib import pyplot as plt
 import plotly.graph_objects as go
 import plotly.express as px
+from plotly.subplots import make_subplots
 
 def plot_candletick(df):
     
@@ -23,13 +24,25 @@ def plot_candletick(df):
     
     fig.show()
       
-def plot_candletick_anomaly(df, filepath_output, left_b, right_b):
-
-    df = df[left_b:right_b]
+def plot_candletick_anomaly(df):
+    
+    fig = make_subplots()
+    
+    fig.add_scatter(
+        x = df[df['true'] == True]['t_start'],
+        y = df[df['true'] == True]['open_price'],
+        mode = 'markers',
+        marker=dict(size=5, color="blue"),
+        name = 'true'
+    )
+    
+    fig.add_scatter(
+        x = df[df['predicted'] == True]['t_start'],
+        y = df[df['predicted'] == True]['close_price'],
+        mode = 'markers',
+        marker=dict(size=5, color="purple"),
         
-    fig = px.scatter(
-        x = df[df['target'] == 1]['t_start'],
-        y = df[df['target'] == 1]['open_price']
+        name='predicted'
     )
 
     fig.add_trace(
@@ -38,12 +51,12 @@ def plot_candletick_anomaly(df, filepath_output, left_b, right_b):
             open=df['open_price'],
             high=df['high_price'],
             low=df['low_price'],
-            close=df['close_price']
-        ))
+            close=df['close_price'],
+            name='klines'
+        )
+    )
     
     fig.show()
-
-    fig.write_image(os.path.join(filepath_output,'candlestick.png'))
 
 def plot_roc_curve(y_true, y_score):
     
@@ -71,11 +84,21 @@ def find_max_fscore(y_true, y_score):
        
     f_score = pd.Series(f_score, index=cutoff_list)
 
-    fig, ax = plt.subplots()
-    f_score.plot(ax=ax)
-    plt.show()
- 
     return f_score.idxmax()
+
+def find_max_recall(y_true, y_score):
+
+    rec_score = []
+    cutoff_list = np.arange(0,1,0.01)
+ 
+    for cutoff in cutoff_list:
+        y_pred = (y_score > cutoff).astype(int)
+        rec_scr = recall_score(y_true, y_pred, pos_label=1, average='binary')
+        rec_score.append(rec_scr)
+       
+    rec_score = pd.Series(rec_score, index=cutoff_list)
+
+    return rec_score.idxmax()
 
 def plot_confusion_matrix(y_true, y_score, cutoff):
     
@@ -104,11 +127,11 @@ def plot_confusion_matrix(y_true, y_score, cutoff):
     
     plt.show()
 
-def plot_feature_importnaces(model,x_train):
+def plot_feature_importnaces(model,x_train,top = 20):
     
     importances = model.get_feature_importance()
     forest_importances = pd.Series(importances, index=x_train.columns.to_list())
-    forest_importances = forest_importances.sort_values(ascending = False)
+    forest_importances = forest_importances.sort_values(ascending = False)[:top]
     
     fig, ax = plt.subplots()
     forest_importances.plot.bar(ax=ax)

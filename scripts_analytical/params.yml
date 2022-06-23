@@ -1,9 +1,13 @@
 root_path : '/Users/cotangentofzero/Data_science/trading_project/'
 filepath_input : 'data/raw_data/'
 filepath_output : 'data/' 
-model_name : "artifacts/trading_model_2"
-shift : 9
-anomaly_crtiretion : 1.0030
+model_name : 'artifacts/trading_model_2'
+
+feature_cols : ['close_price','n_trades','base_volume','buy_base','vol_per_trade']
+shift_bckwd : 18
+shift_frwd : 7
+anomaly_crtiretion : 1.0050
+
 cb_params : {
   'iterations': 300,
   'learning_rate': 0.03,
@@ -14,4 +18,3 @@ cb_params : {
   'allow_writing_files': False,
   'random_state': 42
   }
-cutoff : 0.04
