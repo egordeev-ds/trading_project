@@ -7,6 +7,7 @@ from sklearn.metrics import f1_score, recall_score, roc_curve, confusion_matrix
 from matplotlib import pyplot as plt
 import plotly.graph_objects as go
 import plotly.express as px
+from plotly.subplots import make_subplots
 
 def plot_candletick(df):
     
@@ -24,17 +25,24 @@ def plot_candletick(df):
     fig.show()
       
 def plot_candletick_anomaly(df):
-        
-    fig = px.scatter(
-        x = df[df['true'] == 1]['t_start'],
-        y = df[df['true'] == 1]['open_price'],
-        color = 'black'
+    
+    fig = make_subplots()
+    
+    fig.add_scatter(
+        x = df[df['true'] == True]['t_start'],
+        y = df[df['true'] == True]['open_price'],
+        mode = 'markers',
+        marker=dict(size=5, color="blue"),
+        name = 'true'
     )
     
-    fig = px.scatter(
-        x = df[df['predicted'] == 1]['t_start'],
-        y = df[df['predicted'] == 1]['open_price'], 
-        color = 'white'
+    fig.add_scatter(
+        x = df[df['predicted'] == True]['t_start'],
+        y = df[df['predicted'] == True]['close_price'],
+        mode = 'markers',
+        marker=dict(size=5, color="purple"),
+        
+        name='predicted'
     )
 
     fig.add_trace(
@@ -43,12 +51,12 @@ def plot_candletick_anomaly(df):
             open=df['open_price'],
             high=df['high_price'],
             low=df['low_price'],
-            close=df['close_price']
-        ))
+            close=df['close_price'],
+            name='klines'
+        )
+    )
     
     fig.show()
-
-    #fig.write_image(os.path.join(filepath_output,'candlestick.png'))
 
 def plot_roc_curve(y_true, y_score):
     
