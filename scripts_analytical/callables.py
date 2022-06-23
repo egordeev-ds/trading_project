@@ -132,8 +132,8 @@ def generate_features(df, shift_b, shift_f, anomaly_crtiretion):
 
     #target
     df['target'] = np.where(
-        df.close_price > df.open_price,
-        df.high_price/df.open_price  > anomaly_crtiretion,
+        df.open_price > df.close_price,
+        df.open_price/df.close_price > anomaly_crtiretion,
         False
         )
     df['target'] = df['target'].shift(-shift_f)
